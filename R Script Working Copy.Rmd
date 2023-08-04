@@ -1,0 +1,733 @@
+---
+title: "Support for a labelled line of cold sensation: preliminary electrophysiological data support a direct pathway from cold-sensitive primary afferents to cold-selective spinal output neurons in mice"
+author: "Johanna Armstrong"
+date: "04 August 2023"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Setup
+
+```{r}
+library("readxl")
+library("tidyverse")
+library("ggpubr")
+library("PairedData")
+library("ggplot2")
+library("coin")
+library("rstatix")
+library("patchwork")
+library("gridExtra")
+library("lsr")
+```
+
+
+# Sample descriptives
+
+```{r}
+df_sample <- tibble(
+  Cell = c("1", "2", "3", "4", "5", "6", "7", "8", "9"),
+  Age_d = c(60, 61, 50, 52, 47, 48, 54, 44, 50),
+  Weight_g = c(21, 25.3, 22.6, 19.7, 27, 27.4, 19, 18.5, 16.8),
+  Sex = c("Male", "Male", "Male", "Female", "Male", "Male", "Female", "Male", "Female"),
+  Inclusion = c("Excluded", "Excluded", "Included", "Excluded", "Excluded", "Included", "Excluded", "Excluded", "Included")
+  )
+
+p_sample <- ggplot(df_sample, aes(x = Age_d, y = Weight_g, shape = Inclusion, color = Sex)) +
+  geom_point(size = 4, alpha = 0.9) +
+  theme_classic() +
+  xlab("Age (postnatal day)") +
+  ylab("Weight (g)") + 
+  coord_cartesian(ylim = c(14, 30))
+
+ggsave(path = "Figures", filename = "Sample descriptives.png", p_sample, height = 3, width = 5, units = "in")
+```
+
+
+# Characterise cells based on changes in action potential frequency following cutaneous stimulation
+
+## Cold
+
+```{r}
+cold_01 <- read_excel("AP Search Results.xlsx", sheet = "01Jun Cold (_0010)")[5] |>
+  as.data.frame() |>
+  rename(TimePostStim_s = "Event Start Time (ms)") |>
+  mutate(TimePostStim_s = (TimePostStim_s/1000)-10.4)
+
+cold_02 <- read_excel("AP Search Results.xlsx", sheet = "16Jun Cold (_0004)")[5] |>
+  as.data.frame() |>
+  rename(TimePostStim_s = "Event Start Time (ms)") |>
+  mutate(TimePostStim_s = (TimePostStim_s/1000)-10.4)
+
+cold_03 <- read_excel("AP Search Results.xlsx", sheet = "29Jun Cold (_0013)")[5] |>
+  as.data.frame() |>
+  rename(TimePostStim_s = "Event Start Time (ms)") |>
+  mutate(TimePostStim_s = (TimePostStim_s/1000)-10.4)
+
+#calculate action potential frequency in 1 second bins relative to stimulus onset (estimated delivery time 10.4s)
+breaks <- seq(-9, 10, by = 1)
+cold_01cut <- table(cut(as.matrix(cold_01), breaks = breaks)) |> as.data.frame()
+cold_02cut <- table(cut(as.matrix(cold_02), breaks = breaks)) |> as.data.frame()
+cold_03cut <- table(cut(as.matrix(cold_03), breaks = breaks)) |> as.data.frame()
+
+cold_binned <- left_join(cold_01cut, cold_02cut, by = "Var1") |> left_join(cold_03cut) |>
+  rename(Time = Var1,
+         Cell01 = Freq.x,
+         Cell02 = Freq.y,
+         Cell03 = Freq) |>
+  mutate(Cell01 = Cell01/4,
+         Cell02 = Cell02/4,
+         Cell03 = Cell03/4) #divide to find average of the 4 technical repeats for each cell
+
+#find baseline average for each cell
+cold_baseline <- cold_binned[1:9,]
+cold_baseline01 <- mean(cold_baseline$Cell01)
+cold_baseline02 <- mean(cold_baseline$Cell02)
+cold_baseline03 <- mean(cold_baseline$Cell03)
+
+cold_binnedlong <- pivot_longer(
+  cold_binned,
+  c("Cell01", "Cell02", "Cell03"),
+  names_to = "Cell",
+  values_to = "Frequency")
+
+cold_summary <- cold_binnedlong |>
+  group_by(Time) |>
+  summarise(
+    SD = sd(Frequency, na.rm = TRUE),
+    MeanFreq = mean(Frequency)) |>
+  mutate(MidTime = c(-8.5:9.5)) |>
+  left_join(cold_binned, by="Time") |>
+  pivot_longer(
+  c("Cell01", "Cell02", "Cell03"),
+  names_to = "Cell",
+  values_to = "Frequency")
+
+palette_cold <- c("#0099FF", "#0066FF", "#0033FF")
+p_coldAP <- ggplot(cold_summary, aes(x = MidTime, y = Frequency))+
+  theme_classic() +
+  geom_line(aes(x = MidTime, y = MeanFreq), linewidth = 0.4) +
+  geom_line(aes(x = MidTime, y = Frequency, group = Cell, colour = Cell), linetype = "dashed", linewidth = 0.4, alpha = 0.5) +
+  geom_point(aes(x = MidTime, y = MeanFreq)) +
+  geom_point(aes(x = MidTime, y = Frequency, shape = Cell, colour = Cell), alpha = 0.7)+
+  geom_errorbar(aes(x = MidTime, ymin = MeanFreq-SD, ymax = MeanFreq+SD), width = 0.2, linewidth = 0.3) +
+  scale_color_manual(values = palette_cold) +
+  xlab("Approximate time from stimulus onset (seconds)") + 
+  ylab(expression(atop("AP frequency", paste("(APs per second)")))) +
+  scale_x_continuous(breaks = seq(-8, 10, 2)) +
+  scale_y_continuous(breaks = seq(0, 12, 2)) +
+  ggtitle("Cold") +
+  coord_cartesian(ylim = c(-2, 12))
+```
+
+
+## Heat 
+
+```{r}
+heat_01 <- read_excel("AP Search Results.xlsx", sheet = "01Jun Heat (_0011)")[5] |>
+  as.data.frame() |>
+  rename(TimePostStim_s = "Event Start Time (ms)") |>
+  mutate(TimePostStim_s = (TimePostStim_s/1000)-10.4)
+
+heat_02 <- read_excel("AP Search Results.xlsx", sheet = "16Jun Heat (_0005)")[5] |>
+  as.data.frame() |>
+  rename(TimePostStim_s = "Event Start Time (ms)") |>
+  mutate(TimePostStim_s = (TimePostStim_s/1000)-10.4)
+
+heat_03 <- read_excel("AP Search Results.xlsx", sheet = "29Jun Heat (_0012)")[5] |>
+  as.data.frame() |>
+  rename(TimePostStim_s = "Event Start Time (ms)") |>
+  mutate(TimePostStim_s = (TimePostStim_s/1000)-10.4)
+
+#calculate action potential frequency in 1 second bins relative to stimulus onset (estimated delivery time 10.4s)
+breaks <- seq(-9, 10, by = 1)
+heat_01cut <- table(cut(as.matrix(heat_01), breaks = breaks)) |> as.data.frame()
+heat_02cut <- table(cut(as.matrix(heat_02), breaks = breaks)) |> as.data.frame()
+heat_03cut <- table(cut(as.matrix(heat_03), breaks = breaks)) |> as.data.frame()
+
+heat_binned <- left_join(heat_01cut, heat_02cut, by = "Var1") |> left_join(heat_03cut) |>
+  rename(Time = Var1,
+         Cell01 = Freq.x,
+         Cell02 = Freq.y,
+         Cell03 = Freq) |>
+  mutate(Cell01 = Cell01/4,
+         Cell02 = Cell02/4,
+         Cell03 = Cell03/4)  
+
+heat_binnedlong <- pivot_longer(
+  heat_binned,
+  c("Cell01", "Cell02", "Cell03"),
+  names_to = "Cell",
+  values_to = "Frequency")
+
+heat_summary <- heat_binnedlong |>
+  group_by(Time) |>
+  summarise(
+    SD = sd(Frequency, na.rm = TRUE),
+    MeanFreq = mean(Frequency)) |>
+  mutate(MidTime = c(-8.5:9.5)) |>
+  left_join(heat_binned, by="Time") |>
+  pivot_longer(
+  c("Cell01", "Cell02", "Cell03"),
+  names_to = "Cell",
+  values_to = "Frequency")
+
+palette_heat <- c("#FF9900", "#FF6600", "#FF3300")
+p_heatAP <- ggplot(heat_summary, aes(x = MidTime, y = Frequency))+
+  theme_classic() +
+  geom_line(aes(x = MidTime, y = MeanFreq), linewidth = 0.4) +
+  geom_line(aes(x = MidTime, y = Frequency, group = Cell, colour = Cell), linetype = "dashed", linewidth = 0.4, alpha = 0.5) +
+  geom_point(aes(x = MidTime, y = MeanFreq)) +
+  geom_point(aes(x = MidTime, y = Frequency, shape = Cell, colour = Cell), alpha = 0.7)+
+  geom_errorbar(aes(x = MidTime, ymin = MeanFreq-SD, ymax = MeanFreq+SD), width = 0.2, linewidth = 0.3) +
+  scale_color_manual(values = palette_heat) +
+  xlab("Approximate time from stimulus onset (seconds)") + 
+  ylab(expression(atop("AP frequency", paste("(APs per second)")))) +
+  scale_x_continuous(breaks = seq(-8, 10, 2)) +
+  scale_y_continuous(breaks = seq(0, 12, 2)) +
+  ggtitle("Heat") +
+  coord_cartesian(ylim = c(-2, 12))
+```
+
+
+## Mechanical
+
+```{r}
+mech_01 <- read_excel("AP Search Results.xlsx", sheet = "01Jun Mech (_0012)")[5] |>
+  as.data.frame() |>
+  rename(TimePostStim_s = "Event Start Time (ms)") |>
+  mutate(TimePostStim_s = (TimePostStim_s/1000)-10.4)
+
+mech_02 <- read_excel("AP Search Results.xlsx", sheet = "16Jun Mech (_0006)")[5] |>
+  as.data.frame() |>
+  rename(TimePostStim_s = "Event Start Time (ms)") |>
+  mutate(TimePostStim_s = (TimePostStim_s/1000)-10.4)
+
+mech_03 <- read_excel("AP Search Results.xlsx", sheet = "29Jun Mech (_0011)")[5] |>
+  as.data.frame() |>
+  rename(TimePostStim_s = "Event Start Time (ms)") |>
+  mutate(TimePostStim_s = (TimePostStim_s/1000)-10.4)
+
+#calculate action potential frequency in 1 second bins relative to stimulus onset (estimated delivery time 10.4s)
+breaks <- seq(-9, 10, by = 1)
+mech_01cut <- table(cut(as.matrix(mech_01), breaks = breaks)) |> as.data.frame()
+mech_02cut <- table(cut(as.matrix(mech_02), breaks = breaks)) |> as.data.frame()
+mech_03cut <- table(cut(as.matrix(mech_03), breaks = breaks)) |> as.data.frame()
+
+mech_binned <- left_join(mech_01cut, mech_02cut, by = "Var1") |> left_join(mech_03cut) |>
+  rename(Time = Var1,
+         Cell01 = Freq.x,
+         Cell02 = Freq.y,
+         Cell03 = Freq) |>
+  mutate(Cell01 = Cell01/4,
+         Cell02 = Cell02/4,
+         Cell03 = Cell03/4)  
+
+mech_binnedlong <- pivot_longer(
+  mech_binned,
+  c("Cell01", "Cell02", "Cell03"),
+  names_to = "Cell",
+  values_to = "Frequency")
+
+mech_summary <- mech_binnedlong |>
+  group_by(Time) |>
+  summarise(
+    SD = sd(Frequency, na.rm = TRUE),
+    MeanFreq = mean(Frequency)) |>
+  mutate(MidTime = c(-8.5:9.5)) |>
+  left_join(mech_binned, by="Time") |>
+  pivot_longer(
+  c("Cell01", "Cell02", "Cell03"),
+  names_to = "Cell",
+  values_to = "Frequency")
+
+palette_mech <- c("#CCFF00", "#99FF00", "#66FF00")
+p_mechAP <- ggplot(mech_summary, aes(x = MidTime, y = Frequency))+
+  theme_classic() +
+  geom_line(aes(x = MidTime, y = MeanFreq), linewidth = 0.4) +
+  geom_line(aes(x = MidTime, y = Frequency, group = Cell, colour = Cell), linetype = "dashed", linewidth = 0.4, alpha = 0.5) +
+  geom_point(aes(x = MidTime, y = MeanFreq)) +
+  geom_point(aes(x = MidTime, y = Frequency, shape = Cell, colour = Cell), alpha = 0.7)+
+  geom_errorbar(aes(x = MidTime, ymin = MeanFreq-SD, ymax = MeanFreq+SD), width = 0.2, linewidth = 0.3) +
+  scale_color_manual(values = palette_mech) +
+  xlab("Approximate time from stimulus onset (seconds)") + 
+  ylab(expression(atop("AP frequency", paste("(APs per second)")))) +
+  scale_x_continuous(breaks = seq(-8, 10, 2)) +
+  scale_y_continuous(breaks = seq(0, 12, 2)) +
+  ggtitle("Mechanical") +
+  coord_cartesian(ylim = c(-2, 12))
+```
+
+```{r}
+#combine plots
+stim_responses <- p_coldAP / p_heatAP / p_mechAP
+ggsave(path = "Figures", filename = "Stimulus responses.png", stim_responses, height = 7, width = 6, units = "in")
+```
+
+
+# Assess cells' stimulus specificity following Hachisuka et al.'s (2020) definition of a cold-selective cell
+
+```{r}
+#calculate threshold to be considered responsive to stimulus type (mean of baseline + 3*SD of baseline)
+#cold
+cold_baseline <- slice(cold_binned, 1:9) |>
+  gather(
+    key = "cell",
+    value = "freq",
+    Cell01:Cell03) |>
+  group_by(cell) |>
+  summarise(
+    mean = mean(freq),
+    sd = sd(freq)) |>
+  mutate(threshold = mean + 3*sd) 
+
+threshold_cold01 <- as.numeric(cold_baseline[1, 4])
+threshold_cold02 <- as.numeric(cold_baseline[2, 4])
+threshold_cold03 <- as.numeric(cold_baseline[3, 4])
+
+#heat
+heat_baseline <- slice(heat_binned, 1:9) |>
+  gather(
+    key = "cell",
+    value = "freq",
+    Cell01:Cell03) |>
+  group_by(cell) |>
+  summarise(
+    mean = mean(freq),
+    sd = sd(freq)) |>
+  mutate(threshold = mean + 3*sd) 
+
+threshold_heat01 <- as.numeric(heat_baseline[1, 4])
+threshold_heat02 <- as.numeric(heat_baseline[2, 4])
+threshold_heat03 <- as.numeric(heat_baseline[3, 4])
+
+#mechanical
+mech_baseline <- slice(mech_binned, 1:9) |>
+  gather(
+    key = "cell",
+    value = "freq",
+    Cell01:Cell03) |>
+  group_by(cell) |>
+  summarise(
+    mean = mean(freq),
+    sd = sd(freq)) |>
+  mutate(threshold = mean + 3*sd) 
+
+threshold_mech01 <- as.numeric(mech_baseline[1, 4])
+threshold_mech02 <- as.numeric(mech_baseline[2, 4])
+threshold_mech03 <- as.numeric(mech_baseline[3, 4])
+
+#prepare data for plotting
+cold_binned <- mutate(cold_binned, MidTime = c(-8.5:9.5))
+heat_binned <- mutate(heat_binned, MidTime = c(-8.5:9.5))
+mech_binned <- mutate(mech_binned, MidTime = c(-8.5:9.5))
+```
+
+
+# Analyse pharmacology experiment results
+
+```{r}
+#combine results files per cell
+
+#cell 01
+#3 recordings (each 10min long) were captured sequentially during the experiment
+cell01_file1 <- read_excel("Pharm Experiment Search Results.xlsx", sheet = "01Jun _0014")[5]
+cell01_file2 <- read_excel("Pharm Experiment Search Results.xlsx", sheet = "01Jun _0015")[5]
+cell01_file3 <- read_excel("Pharm Experiment Search Results.xlsx", sheet = "01Jun _0016")[5]
+#warning message concerns other columns containing text, but this does not affect the column we are extracting
+
+cell01_file2[1] <- cell01_file2[1] + 600000 #add 10mins to start time 
+cell01_file3[1] <- cell01_file3[1] + 1200000 #add 20mins to start time 
+
+events_cell01 <- bind_rows(cell01_file1, cell01_file2, cell01_file3) |>
+  rename("Time_ms" = "Event Start Time (ms)") |> 
+  mutate(
+    Time_s = Time_ms/1000,
+    Cell = "01")
+
+#cell 02
+#3 recordings (540979.15ms, 10min and 10min long) were captured sequentially during the experiment
+cell02_file1 <- read_excel("Pharm Experiment Search Results.xlsx", sheet = "16Jun _0007")[5]
+cell02_file2 <- read_excel("Pharm Experiment Search Results.xlsx", sheet = "16Jun _0008")[5]
+cell02_file3 <- read_excel("Pharm Experiment Search Results.xlsx", sheet = "16Jun _0009")[5]
+#warning message concerns other columns containing text, but this does not affect the column we are extracting
+
+cell02_file2[1] <- cell02_file2[1] + 540979.15 #add 540979.15ms to start time
+cell02_file3[1] <- cell02_file3[1] + 1140979.15 #add 540979.15ms plus further 10mins to start time 
+
+events_cell02 <- bind_rows(cell02_file1, cell02_file2, cell02_file3) |>
+  rename("Time_ms" = "Event Start Time (ms)") |>
+  mutate(
+    Time_s = Time_ms/1000,
+    Cell = "02")
+
+#cell03
+#3 recordings (each 10min long) were captured sequentially during the experiment
+cell03_file1 <- read_excel("Pharm Experiment Search Results.xlsx", sheet = "29Jun _0014")[5]
+cell03_file2 <- read_excel("Pharm Experiment Search Results.xlsx", sheet = "29Jun _0015")[5]
+cell03_file3 <- read_excel("Pharm Experiment Search Results.xlsx", sheet = "29Jun _0016")[5]
+#warning message concerns other columns containing text, but this does not affect the column we are extracting
+
+cell03_file2[1] <- cell03_file2[1] + 600000 #add 10mins to start time
+cell03_file3[1] <- cell03_file3[1] + 1200000 #add 20mins to start time 
+
+events_cell03 <- bind_rows(cell03_file1, cell03_file2, cell03_file3) |>
+  rename("Time_ms" = "Event Start Time (ms)") |>
+  mutate(
+    Time_s = Time_ms/1000,
+    Cell = "03")
+
+events_allcells <- bind_rows(events_cell01, events_cell02, events_cell03)
+```
+
+
+## Visualise changes in activity over time during pharmacology experiment
+
+```{r}
+palette_cells <- c("#00CC99", "#33CC99", "#66CC99")
+palette_perfusions <- c("#666FFF", "#663399", "#FDE725FF")
+
+#cell 01
+#0.5uM TTX was dispensed from 2.05s until 660.52s
+#0.5uM TTX + 1.5uM WS-12 was dispensed from 660.52s until 840.49s
+#0.5uM TTX was dispensed from 840.49s until 1200.00s
+p_pharmoverview01 <- ggplot() +
+  theme_classic() +
+  geom_histogram(aes(x = Time_s), binwidth = 30, alpha = 0.5, position = "identity", fill = palette_cells[1], colour = palette_cells[1], data = events_cell01) +
+  annotate(geom = "rect", xmin = 2.05, xmax = 660.52, ymin = 150, ymax = 155, fill = palette_perfusions[2], alpha = 0.6) +
+  annotate(geom = "rect", xmin = 660.52, xmax = 840.49, ymin = 150, ymax = 155, fill = palette_perfusions[3], alpha = 0.7) +
+  annotate(geom = "rect", xmin = 840.49, xmax = 1200, ymin = 150, ymax = 155, fill = palette_perfusions[2], alpha = 0.6) +
+  scale_x_continuous(breaks = seq(0, 1800, 200)) +
+  scale_y_continuous(breaks = seq(0, 150, 50)) +
+  coord_cartesian(xlim = c(-50, 1815),
+                  ylim = c(0, 180),
+                  expand = FALSE) + 
+  xlab("Time (s)") +
+  ylab(expression(atop("EPSC frequency", paste("(EPSCs per 30s)"))))
+
+#cell 02
+#0.5uM TTX was dispensed from 19.46s until 601.45s
+#0.5uM TTX + 1.5uM WS-12 was dispensed from 601.45s until 841.47s
+#0.5uM TTX was dispensed from 841.47s until 1140.98s
+p_pharmoverview02 <- ggplot() +
+  theme_classic() +
+  geom_histogram(aes(x = Time_s), binwidth = 30, alpha = 0.5, position = "identity", fill = palette_cells[2], colour = palette_cells[2], data = events_cell02) +
+  annotate(geom = "rect", xmin = 19.46, xmax = 601.45, ymin = 380, ymax = 390, fill = palette_perfusions[2], alpha = 0.6) +
+  annotate(geom = "rect", xmin = 601.45, xmax = 841.47, ymin = 380, ymax = 390, fill = palette_perfusions[3], alpha = 0.7) +
+  annotate(geom = "rect", xmin = 841.47, xmax = 1140.98, ymin = 380, ymax = 390, fill = palette_perfusions[2], alpha = 0.6) +
+  scale_x_continuous(breaks = seq(0, 1600, 200)) +
+  scale_y_continuous(breaks = seq(0, 350, 50)) +
+  coord_cartesian(xlim = c(-50, 1680),
+                  ylim = c(0, 420),
+                  expand = FALSE) + 
+  xlab("Time (s)") +
+  ylab(expression(atop("EPSC frequency", paste("(EPSCs per 30s)"))))
+
+#cell 03
+#0.5uM TTX was dispensed from 87.45s until 720.42s
+#0.5uM TTX + 1.5uM WS-12 was dispensed from 720.42s until 1140.62s
+#0.5uM TTX was dispensed from 1140.62s until 1200.00s
+p_pharmoverview03 <- ggplot() +
+  theme_classic() +
+  geom_histogram(aes(x = Time_s), binwidth = 30, alpha = 0.5, position = "identity", fill = palette_cells[3], colour = palette_cells[3], data = events_cell03) +
+  annotate(geom = "rect", xmin = 87.45, xmax = 720.42, ymin = 270, ymax = 277, fill = palette_perfusions[2], alpha = 0.6) + 
+  annotate(geom = "rect", xmin = 720.42, xmax = 1140.62, ymin = 270, ymax = 277, fill = palette_perfusions[3], alpha = 0.7) + 
+  annotate(geom = "rect", xmin = 1140.62, xmax = 1200, ymin = 270, ymax = 277, fill = palette_perfusions[2], alpha = 0.6) +
+  scale_x_continuous(breaks = seq(0, 1800, 200)) +
+  scale_y_continuous(breaks = seq(0, 250, 50)) +
+  coord_cartesian(xlim = c(-50, 1815),
+                  ylim = c(0, 300),
+                  expand = FALSE) + 
+  xlab("Time (s)") +
+  ylab(expression(atop("EPSC frequency", paste("(EPSCs per 30s)"))))
+```
+
+```{r}
+#combine plots from all cells
+pharm_responses <- p_pharmoverview01 / p_pharmoverview02 / p_pharmoverview03
+ggsave(path = "Figures", filename = "Pharm results - overview.png", pharm_responses, height = 6, width = 6, units = "in")
+```
+
+```{r}
+#compare 30s of baseline activity to final 30s of 0.5uM TTX perfusion
+
+#get baseline activity (EPSCs per 30s)
+dfbaseline_cell01 <- read_excel("Baseline Search Results.xlsx", sheet = "01Jun (_0008)")[5] |>
+  rename(Time_ms = "Event Start Time (ms)") |>
+  filter(Time_ms >= 36508.80 & Time_ms <= 66508.80) #baseline recording continued until 66508.80ms
+baseline_EPSCfreq01 <- nrow(dfbaseline_cell01)
+
+dfbaseline_cell02 <- read_excel("Baseline Search Results.xlsx", sheet = "16Jun (_0003)")[5] |>
+  rename(Time_ms = "Event Start Time (ms)") |>
+  filter(Time_ms >= 108598.40 & Time_ms <= 138598.40) #baseline recording continued until 138598.40ms
+baseline_EPSCfreq02 <- nrow(dfbaseline_cell02)
+
+dfbaseline_cell03 <- read_excel("Baseline Search Results.xlsx", sheet = "29Jun (_0009)")[5] |>
+  rename(Time_ms = "Event Start Time (ms)") |>
+  filter(Time_ms >= 63952.00 & Time_ms <= 93952.00) #baseline recording continued until 93952.00ms
+baseline_EPSCfreq03 <- nrow(dfbaseline_cell03)
+
+mean_baseline <- mean(c(baseline_EPSCfreq01, baseline_EPSCfreq02, baseline_EPSCfreq03))
+sd_baseline <- sd(c(baseline_EPSCfreq01, baseline_EPSCfreq02, baseline_EPSCfreq03))
+
+
+#get activity during final 30s of 1st round of 0.5uM TTX perfusion
+TTX1_EPSCfreq01 <- sum(events_cell01$Time_s >= 630.52 & events_cell01$Time_s < 660.52) #cell 01 was perfused with 0.5uM TTX from 2.048 to 660.52s
+TTX1_EPSCfreq02 <- sum(events_cell02$Time_s >= 571.45 & events_cell02$Time_s < 601.45) #cell 02 was perfused with 0.5uM TTX from 19.46 to 601.45s
+TTX1_EPSCfreq03 <- sum(events_cell03$Time_s >= 690.42 & events_cell03$Time_s < 720.42) #cell 03 was perfused with 0.5uM TTX from 87.45 to 720.42
+
+mean_TTX1 <- mean(c(TTX1_EPSCfreq01, TTX1_EPSCfreq02, TTX1_EPSCfreq03))
+sd_TTX1 <- sd(c(TTX1_EPSCfreq01, TTX1_EPSCfreq02, TTX1_EPSCfreq03))
+
+
+#get activity during final 30s of 0.5uM TTX + 1.5uM WS-12 perfusion
+WS12_EPSCfreq01 <- sum(events_cell01$Time_s >= 810.49 & events_cell01$Time_s < 840.49) #cell 01 was perfused with 0.5uM TTX + 1.5uM WS-12 from 660.52s until 840.49s
+WS12_EPSCfreq02 <- sum(events_cell02$Time_s >= 811.47 & events_cell02$Time_s < 841.47) #cell 02 was perfused with 0.5uM TTX + 1.5uM WS-12 from 601.45s until 841.47s
+WS12_EPSCfreq03 <- sum(events_cell03$Time_s >= 1110.62 & events_cell03$Time_s < 1140.62) #cell 03 was perfused with 0.5uM TTX + 1.5uM WS-12 from 720.42s until 1140.62s
+
+mean_WS12 <- mean(c(WS12_EPSCfreq01, WS12_EPSCfreq02, WS12_EPSCfreq03))
+sd_WS12 <- sd(c(WS12_EPSCfreq01, WS12_EPSCfreq02, WS12_EPSCfreq03))
+
+
+#get activity during final 30s of 2nd round 0.5uM TTX perfusion
+TTX2_EPSCfreq01 <- sum(events_cell01$Time_s >= 1170 & events_cell01$Time_s < 1200) #cell 01 was perfused with 0.5uM TTX from 840.49s until 1200.00s
+TTX2_EPSCfreq02 <- sum(events_cell02$Time_s >= 1110.98 & events_cell02$Time_s < 1140.98) #cell 02 was perfused with 0.5uM TTX from 841.47s until 1140.98s
+TTX2_EPSCfreq03 <- sum(events_cell03$Time_s >= 1170 & events_cell03$Time_s < 1200) #cell 03 was perfused with 0.5uM TTX from 1140.62s until 1200.00s
+
+mean_TTX2 <- mean(c(TTX2_EPSCfreq01, TTX2_EPSCfreq02, TTX2_EPSCfreq03))
+sd_TTX2 <- sd(c(TTX2_EPSCfreq01, TTX2_EPSCfreq02, TTX2_EPSCfreq03))
+
+
+#get activity during final 30s of ACSF wash
+ACSF_EPSCfreq01 <- sum(events_cell01$Time_s >= 1770 & events_cell01$Time_s < 1800) #cell 01 was perfused with 0.5uM TTX from 1200.00s until 1800s
+ACSF_EPSCfreq02 <- sum(events_cell02$Time_s >= 1710.85 & events_cell02$Time_s < 1740.85) #cell 02 was perfused with 0.5uM TTX from 1140.98s until 1740.85s
+ACSF_EPSCfreq03 <- sum(events_cell03$Time_s >= 1770 & events_cell03$Time_s < 1800) #cell 03 was perfused with 0.5uM TTX from 1200.00s until 1800s
+
+mean_ACSF <- mean(c(ACSF_EPSCfreq01, ACSF_EPSCfreq02, ACSF_EPSCfreq03))
+sd_ACSF <- sd(c(ACSF_EPSCfreq01, ACSF_EPSCfreq02, ACSF_EPSCfreq03))
+
+#compile results
+df_pharmres <- tibble(
+  Cell = rep(c("01", "02","03"), each = 5),
+  Condition = rep(c("Baseline", 
+                    "0.5uM TTX (1st round)", 
+                    "0.5uM TTX + 1.5uM WS-12", 
+                    "0.5uM TTX (2nd round)", 
+                    "ACSF"), 3),
+  EPSCFrequency = c(baseline_EPSCfreq01, TTX1_EPSCfreq01, WS12_EPSCfreq01, TTX2_EPSCfreq01, ACSF_EPSCfreq01,
+                    baseline_EPSCfreq02, TTX1_EPSCfreq02, WS12_EPSCfreq02, TTX2_EPSCfreq02, ACSF_EPSCfreq02,
+                    baseline_EPSCfreq03, TTX1_EPSCfreq03, WS12_EPSCfreq03, TTX2_EPSCfreq03, ACSF_EPSCfreq03),
+  Mean = rep(c(mean_baseline, mean_TTX1, mean_WS12, mean_TTX2, mean_ACSF), 3),
+  SD = rep(c(sd_baseline, sd_TTX1, sd_WS12, sd_TTX2, sd_ACSF), 3)
+)
+
+df_pharmres$Condition <- factor(df_pharmres$Condition, 
+                                levels = c("Baseline", 
+                                           "0.5uM TTX (1st round)",
+                                           "0.5uM TTX + 1.5uM WS-12",
+                                           "0.5uM TTX (2nd round)",
+                                           "ACSF")) #specify order of variables to appear in plot
+
+p_pharmres <- ggplot(df_pharmres, aes(x = Condition)) + 
+  theme_classic() +
+  geom_point(aes(y = EPSCFrequency, shape = Cell, colour = Condition), size = 2.5, alpha = 0.9) + 
+  geom_errorbar(aes(ymin = Mean-SD, ymax = Mean+SD), width = 0.2, alpha = 0.3) +
+  geom_point(aes(y = Mean), size = 2) + 
+  theme(axis.text.x = element_text(angle = 25,
+                                   hjust = 1)) +
+  scale_shape_manual(values = c(18, 17, 15)) +
+  scale_fill_manual(values = c(palette_perfusions[1], 
+                               palette_perfusions[2], 
+                               palette_perfusions[3],
+                               palette_perfusions[2],
+                               palette_perfusions[1])) +
+  scale_colour_manual(values = c(palette_perfusions[1], 
+                               palette_perfusions[2], 
+                               palette_perfusions[3],
+                               palette_perfusions[2],
+                               palette_perfusions[1])) +
+  xlab("Perfusate") +
+  ylab(expression(atop("EPSC frequency", paste("(EPSCs per 30s)"))))
+
+ggsave(path = "Figures", filename = "Pharm results - analysed.png", p_pharmres, height = 3.5, width = 5.5, units = "in")
+```
+
+
+## t test
+
+```{r}
+#one-tailed paired t test, comparing mEPSC frequency during 0.5uM TTX perfusion vs during 0.5uM TTX + 1.5uM WS-12 perfusion
+#H0:m≥0
+#Ha:m<0 
+
+df_TTXWS12res <- tibble(
+  Cell = rep(c("01", "02","03"), each = 2),
+  Condition = rep(c("0.5uM TTX", "0.5uM TTX + 1.5uM WS-12"), 3),
+  mEPSCFrequency = c(TTX1_EPSCfreq01, WS12_EPSCfreq01,
+                     TTX1_EPSCfreq02, WS12_EPSCfreq02,
+                     TTX1_EPSCfreq03, WS12_EPSCfreq03)
+)
+
+#check data meets t test's assumption of normality: if normal, p-value from Shapiro-Wilk test should be > 0.05
+  group_by(df_TTXWS12res, Condition) |>
+  shapiro_test(mEPSCFrequency)
+#the scores were normally distributed under each condition, as assessed by Shapiro-Wilk’s test (p > 0.05).
+
+#perform t test
+t_res <- t.test(mEPSCFrequency ~ Condition, data = df_TTXWS12res, paired = TRUE, alternative = "less")  
+#The p-value of the test is greater than the significance level alpha of 0.05. We therefore cannot reject the null hypothesis.
+```
+
+
+# Perfusion test
+
+```{r}
+#load data
+df_dyeresults <- read_excel("Perfusion Test 1-3 Results.xlsx", sheet = "Test 3 Results")[1:4] |>
+  rename(Brightness = "Mean Grey Value") |>
+  mutate(Time_s = Frame*10-10) #1 frame was captured every 10secs and first frame was captured at 00:00
+
+#find important brightness values and time points
+#time corresponding to first notable increase in brightness:
+dye_minbrightness <- min(df_dyeresults$Brightness) 
+dye_smallincreaseval <- 1.1*dye_minbrightness 
+dye_smallincreasetime <- df_dyeresults[which(df_dyeresults$Brightness>dye_smallincreaseval, arr.ind=TRUE)[1],] |> 
+  select(5) |> 
+  as.numeric()
+
+#time corresponding to maximum brightness:
+dye_maxbrightnessval <- max(df_dyeresults$Brightness)
+dye_maxbrightnesstime <- df_dyeresults$Time_s[df_dyeresults$Brightness==dye_maxbrightnessval] |> 
+  as.numeric() 
+
+#time corresponding to post-peak minimum brightness
+dye_postpeakresults <- filter(df_dyeresults, Time_s >= dye_maxbrightnesstime) 
+dye_finalminimumval <- min(dye_postpeakresults$Brightness) 
+dye_finalminimumtime <- dye_postpeakresults$Time_s[dye_postpeakresults$Brightness==dye_finalminimumval] 
+
+#initial brightness vs post-peak minimum brightness
+dye_endvsstart <- round(dye_finalminimumval/dye_minbrightness*100, 2)
+dye_endvsstarttext <- paste0(dye_endvsstart, "% of baseline")
+
+#length of recording
+dye_endtime <- max(df_dyeresults$Time_s)
+
+#plot results
+p_dyeresults <- ggplot(data = df_dyeresults, aes(x = Time_s, y = Brightness)) +
+  theme_classic() +
+  theme(legend.position = "none") +
+   geom_rect(aes(
+    xmin = 0, 
+    xmax = 300, #dye solution was released for 5 minutes
+    ymin = -50, 
+    ymax = 25000), 
+    fill = "#CCFFCC",
+    alpha = 0.01) +
+  geom_line(colour = "#00CC00", linewidth = 0.6) +
+  geom_segment(aes(x = 300, y = dye_maxbrightnessval+1700, xend = dye_finalminimumtime, yend = dye_maxbrightnessval+1700)) +
+  geom_segment(aes(x = 0, y = dye_smallincreaseval+300, xend = dye_smallincreasetime, yend = dye_smallincreaseval+300)) +
+  geom_segment(aes(x = 300, y = dye_maxbrightnessval, xend = dye_maxbrightnesstime, yend = dye_maxbrightnessval)) +
+  geom_segment(aes(x = dye_finalminimumtime, y = dye_finalminimumval, xend = dye_finalminimumtime, yend = dye_maxbrightnessval+1500), alpha = 0.5, linetype = "dashed") +
+  geom_text(aes(x = 35, y = dye_smallincreaseval+950, label = paste0(dye_smallincreasetime, "s")), size = 3.5) +
+  geom_text(aes(x = 325, y = dye_maxbrightnessval+650, label = paste0(dye_maxbrightnesstime-300, "s")), size = 3.5) +
+  geom_text(aes(x = 735, y = dye_maxbrightnessval+2250, label = paste0(dye_finalminimumtime-300, "s")), size = 3.5) +
+  scale_x_continuous(breaks = seq(0, 1200, 200)) +
+  scale_y_continuous(breaks = seq(0, 20000, 5000)) +
+  coord_cartesian(xlim = c(0, 1200),
+                  ylim = c(0, 23400)) + 
+  labs(x = "Time (s)") +
+  ylab("Fluorescence (mean grey value)")
+
+ggsave(path = "Figures", filename = "Perfusion test results.png", p_dyeresults, height = 4.5, width = 6, units = "in")
+```
+
+
+# Follow-up experiment
+
+```{r}
+#combine results from 3 files (each 10min long) recorded during the experiment
+cell03_file4 <- read_excel("Pharm Experiment Search Results.xlsx", sheet = "29Jun _0017")[5]
+cell03_file5 <- read_excel("Pharm Experiment Search Results.xlsx", sheet = "29Jun _0018")[5]
+cell03_file6 <- read_excel("Pharm Experiment Search Results.xlsx", sheet = "29Jun _0019")[5]
+cell03_file7 <- read_excel("Pharm Experiment Search Results.xlsx", sheet = "29Jun _0020")[5]
+#warning message concerns other columns containing text, but this does not affect the column we are extracting
+
+cell03_file5[1] <- cell03_file5[1] + 600000 #add 10mins to start time
+
+cell03_file6[1] <- cell03_file6[1] + 1200000 #add 20mins to start time 
+
+cell03_file7[1] <- cell03_file7[1] + 1800000 #add 30mins to start time 
+
+events_fup <- bind_rows(cell03_file4, cell03_file5) |>
+  bind_rows(cell03_file6) |>
+  bind_rows(cell03_file7) |>
+  rename("Time_ms" = "Event Start Time (ms)") |>
+  mutate(Time_s = Time_ms/1000)
+```
+
+```{r}
+#per perfusion test results:
+#levels of perfusate in perfusion chamber were noticeable from 70s after beginning of release from dispenser
+#levels of perfusate in perfusion chamber reached maximum 50s after cessation of release from dispenser 
+#levels of perfusate in perfusion chamber remained noticeable until 870s after cessation of release from dispenser 
+```
+
+```{r}
+#TTX was released from dispenser from 0s until 603.28s
+#TTX+WS12 was released from dispenser from 603.28s until 1321.65s
+#ACSF was released from dispenser from 1321.65s until 2400.00s
+
+TTX_startfup <- 0
+WS12_startfup <- 603.28
+ACSF_startfup <- 1321.65
+ACSF_endfup <- 2400
+
+pharm_overviewfup <- ggplot() +
+  theme_classic() +
+  geom_histogram(aes(Time_s), binwidth = 30, alpha = 0.5, position = "identity", fill = palette_cells[3], colour = palette_cells[3], data = events_fup) +
+  annotate(geom = "rect", xmin = 0, xmax = 603.28, ymin = 850, ymax = 870, fill = palette_perfusions[2], alpha = 0.7) + #TTX perfusion
+  annotate(geom = "rect", xmin = 603.28, xmax = 1321.65, ymin = 850, ymax = 870, fill = palette_perfusions[3], alpha = 0.8) + #TTX + WS12 perfusion
+  scale_x_continuous(breaks = seq(0, 2400, 200)) +
+  scale_y_continuous(breaks = seq(0, 750, 250)) +
+  coord_cartesian(xlim = c(0, 2400),
+                  ylim = c(0, 920),
+                  expand = TRUE) + 
+  xlab("Time (s)") +
+  ylab("EPSC frequency (per 30 secs)")
+
+ggsave(path = "Figures", filename = "FUP pharm results - overview.png", pharm_overviewfup, height = 4, width = 6, units = "in")
+```
+
+```{r}
+#get EPSC frequencies per final 30s of each perfusion
+#baseline or this cell is already saved to object: baseline_EPSCfreq03 
+TTX_EPSCfrequp <- sum(events_fup$Time_s >= 573.28 & events_fup$Time_s < 603.28) 
+WS12_EPSCfreqfup <- sum(events_fup$Time_s >= 1291.65 & events_fup$Time_s < 1321.65) 
+ACSF_EPSCfreqfup <- sum(events_fup$Time_s >= 2370 & events_fup$Time_s < 2400) 
+
+df_fupres <- tibble(
+  Condition = c("Baseline", "0.5uM TTX", "0.5uM TTX + 1.5uM WS-12", "ACSF"),
+  EPSCFrequency = c(baseline_EPSCfreq03,
+                    TTX_EPSCfrequp,
+                    WS12_EPSCfreqfup,
+                    ACSF_EPSCfreqfup)
+  )
+
+df_fupres$Condition <- factor(df_fupres$Condition, levels = c("Baseline", "0.5uM TTX", "0.5uM TTX + 1.5uM WS-12", "ACSF")) 
+
+p_fupres <- ggplot(df_fupres, aes(x = Condition, y = EPSCFrequency, fill = Condition)) + 
+  theme_classic() +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 25,
+                                   hjust = 1)) +
+  geom_bar(stat = "identity", position = position_dodge(), alpha = 0.7) +
+  scale_fill_manual(values = c(palette_perfusions[1], palette_perfusions[2], palette_perfusions[3], palette_perfusions[1])) +
+  scale_colour_manual(values = c(palette_perfusions[1], palette_perfusions[2], palette_perfusions[3], palette_perfusions[1])) +
+  xlab("Perfusate") +
+  ylab("EPSC frequency (EPSCs per 30s)") 
+
+ggsave(path = "Figures", filename = "FUP pharm results - analysed.png", p_fupres, height = 3.5, width = 2, units = "in")
+```
